@@ -125,13 +125,26 @@ flutter analyze
 # Generate Drift database code (already committed)
 dart run build_runner build
 
+# Run on connected device / emulator (specifying platform reduces APK size from ~175MB to ~84MB)
+flutter run --target-platform android-x64
+
 # Build debug APK
-flutter build apk --debug
+flutter build apk --debug --split-per-abi
 
 # Build release APK / App Bundle
 flutter build apk --release
 flutter build appbundle --release
 ```
+
+> **Note on Android Emulators**: Universal debug APKs bundle multiple native architecture libraries (`sqlite3`, Flutter engine for arm, arm64, x86, x86_64) totaling ~175MB. If your emulator has limited disk partition space and shows `INSTALL_FAILED_INSUFFICIENT_STORAGE`, run:
+> ```bash
+> flutter run --target-platform android-x64
+> ```
+> Or install the split ABI directly:
+> ```bash
+> flutter build apk --debug --split-per-abi
+> adb install -r build/app/outputs/flutter-apk/app-x86_64-debug.apk
+> ```
 
 ### iOS
 ```bash
