@@ -1,9 +1,11 @@
+import 'dart:async';
 import 'dart:math';
 import 'package:drift/drift.dart';
 import '../../domain/models/game_mode.dart';
 import '../../domain/models/game_statistics.dart';
 import '../../domain/repositories/stats_repository.dart';
 import '../local/database/app_database.dart';
+import '../local/vault/game_state_vault.dart';
 
 class StatsRepositoryImpl implements StatsRepository {
   final AppDatabase database;
@@ -12,6 +14,13 @@ class StatsRepositoryImpl implements StatsRepository {
 
   @override
   Future<GameStatistics> getStatistics(String modeKey) async {
+    // 1. Try crash-safe vault
+    if (GameStateVault.instance.isInitialized) {
+      final vaulted = GameStateVault.instance.getStatistics(modeKey);
+      if (vaulted != null) return vaulted;
+    }
+
+    // 2. Fallback to SQLite
     final query = database.select(database.gameStatisticsTable)
       ..where((tbl) => tbl.modeKey.equals(modeKey));
     final entry = await query.getSingleOrNull();
@@ -36,6 +45,12 @@ class StatsRepositoryImpl implements StatsRepository {
 
   @override
   Future<void> saveStatistics(String modeKey, GameStatistics stats) async {
+    // 1. Await persistent disk vault write
+    if (GameStateVault.instance.isInitialized) {
+      await GameStateVault.instance.saveStatistics(modeKey, stats);
+    }
+
+    // 2. Update SQLite
     await database.into(database.gameStatisticsTable).insertOnConflictUpdate(
           GameStatisticsTableCompanion(
             modeKey: Value(modeKey),

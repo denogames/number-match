@@ -1,20 +1,20 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../../application/providers.dart';
 import '../../../../core/theme/app_theme_tokens.dart';
 import '../../../../domain/models/game_mode.dart';
 import '../../../../domain/models/game_state.dart';
 
-class GameHeaderWidget extends StatelessWidget {
-  final GameState state;
+class GameTimerBadgeWidget extends ConsumerWidget {
+  final GameMode mode;
   final AppThemeTokens theme;
   final double textScale;
-  final VoidCallback onPause;
 
-  const GameHeaderWidget({
+  const GameTimerBadgeWidget({
     super.key,
-    required this.state,
+    required this.mode,
     required this.theme,
-    required this.onPause,
-    this.textScale = 1.0,
+    required this.textScale,
   });
 
   String _formatTime(int seconds) {
@@ -22,6 +22,56 @@ class GameHeaderWidget extends StatelessWidget {
     final s = seconds % 60;
     return '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
   }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final timerData = ref.watch(
+      gameControllerProvider.select((s) {
+        if (s == null) return (0, 0);
+        return (s.elapsedSeconds, s.remainingSeconds);
+      }),
+    );
+    final elapsed = timerData.$1;
+    final remaining = timerData.$2;
+    final isLowTime = mode == GameMode.timed && remaining < 30;
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(
+          Icons.access_time_rounded,
+          size: 16.0 * textScale,
+          color: isLowTime ? theme.cellInvalidBorder : theme.textSecondary,
+        ),
+        const SizedBox(width: 4),
+        Text(
+          mode == GameMode.timed ? _formatTime(remaining) : _formatTime(elapsed),
+          style: TextStyle(
+            fontSize: 14.0 * textScale,
+            fontWeight: FontWeight.w700,
+            color: isLowTime ? theme.cellInvalidBorder : theme.textSecondary,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class GameHeaderWidget extends StatelessWidget {
+  final GameState state;
+  final AppThemeTokens theme;
+  final double textScale;
+  final VoidCallback onPause;
+  final Widget? timerBadge;
+
+  const GameHeaderWidget({
+    super.key,
+    required this.state,
+    required this.theme,
+    required this.onPause,
+    this.textScale = 1.0,
+    this.timerBadge,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -76,33 +126,15 @@ class GameHeaderWidget extends StatelessWidget {
                 ),
               ),
 
-              // Timer / Remaining time
-              Row(
-                children: [
-                  Icon(
-                    Icons.access_time_rounded,
-                    size: 16.0 * textScale,
-                    color: state.mode == GameMode.timed &&
-                            state.remainingSeconds < 30
-                        ? theme.cellInvalidBorder
-                        : theme.textSecondary,
+              // Leaf Timer Badge (isolated re-renders)
+              timerBadge ??
+                  _DefaultTimerBadge(
+                    mode: state.mode,
+                    elapsed: state.elapsedSeconds,
+                    remaining: state.remainingSeconds,
+                    theme: theme,
+                    textScale: textScale,
                   ),
-                  const SizedBox(width: 4),
-                  Text(
-                    state.mode == GameMode.timed
-                        ? _formatTime(state.remainingSeconds)
-                        : _formatTime(state.elapsedSeconds),
-                    style: TextStyle(
-                      fontSize: 14.0 * textScale,
-                      fontWeight: FontWeight.w700,
-                      color: state.mode == GameMode.timed &&
-                              state.remainingSeconds < 30
-                          ? theme.cellInvalidBorder
-                          : theme.textSecondary,
-                    ),
-                  ),
-                ],
-              ),
 
               // Pause button
               IconButton(
@@ -205,6 +237,55 @@ class GameHeaderWidget extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _DefaultTimerBadge extends StatelessWidget {
+  final GameMode mode;
+  final int elapsed;
+  final int remaining;
+  final AppThemeTokens theme;
+  final double textScale;
+
+  const _DefaultTimerBadge({
+    required this.mode,
+    required this.elapsed,
+    required this.remaining,
+    required this.theme,
+    required this.textScale,
+  });
+
+  String _formatTime(int seconds) {
+    final m = seconds ~/ 60;
+    final s = seconds % 60;
+    return '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isLowTime = mode == GameMode.timed && remaining < 30;
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(
+          Icons.access_time_rounded,
+          size: 16.0 * textScale,
+          color: isLowTime ? theme.cellInvalidBorder : theme.textSecondary,
+        ),
+        const SizedBox(width: 4),
+        Text(
+          mode == GameMode.timed
+              ? _formatTime(remaining)
+              : _formatTime(elapsed),
+          style: TextStyle(
+            fontSize: 14.0 * textScale,
+            fontWeight: FontWeight.w700,
+            color: isLowTime ? theme.cellInvalidBorder : theme.textSecondary,
+          ),
+        ),
+      ],
     );
   }
 }

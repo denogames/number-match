@@ -14,7 +14,7 @@ import 'analytics/analytics_service.dart';
 import 'economy/reward_service.dart';
 import 'monetization/ads/ad_provider.dart';
 import 'monetization/ads/ad_service.dart';
-import 'monetization/ads/mock_ad_provider.dart';
+import 'monetization/ads/admob_placeholder_ad_provider.dart';
 import 'monetization/iap/entitlement_state.dart';
 import 'monetization/iap/iap_service.dart';
 import 'settings/settings_controller.dart';
@@ -69,7 +69,7 @@ final rewardServiceProvider = Provider<RewardService>((ref) {
 
 // Monetization
 final adProviderProvider = Provider<AdProvider>((ref) {
-  return MockAdProvider();
+  return AdMobPlaceholderAdProvider();
 });
 
 final adServiceProvider = Provider<AdService>((ref) {

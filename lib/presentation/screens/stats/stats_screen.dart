@@ -123,7 +123,7 @@ class _StatsScreenState extends ConsumerState<StatsScreen> {
                   ],
                 ),
               ),
-              const SizedBox(height: 20),
+              const SizedBox(height: 16),
 
               // Detail Grid
               Expanded(

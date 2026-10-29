@@ -65,7 +65,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         ),
         actions: const [
           Padding(
-            padding: EdgeInsets.only(right: 16),
+            padding: EdgeInsets.only(right: 16, left: 4),
             child: Center(child: CoinChip()),
           ),
         ],
@@ -203,7 +203,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               ),
               const SizedBox(height: 28),
 
-              // Bottom Shortcuts Grid (Tutorial, Stats, Shop, Settings)
+              // Bottom Shortcuts Grid (Tutorial, Stats, Settings)
               Row(
                 children: [
                   Expanded(
@@ -223,16 +223,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                       theme: theme,
                       textScale: settings.textScale,
                       onTap: () => context.push('/stats'),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: _QuickActionCard(
-                      icon: Icons.storefront_rounded,
-                      label: 'Shop',
-                      theme: theme,
-                      textScale: settings.textScale,
-                      onTap: () => context.push('/shop'),
                     ),
                   ),
                   const SizedBox(width: 10),

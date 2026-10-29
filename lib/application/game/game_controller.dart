@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:studio_core_sdk/studio_core_sdk.dart';
 import '../../core/audio/audio_feedback_service.dart';
+import '../../core/constants/game_constants.dart';
 import '../../core/haptics/haptic_feedback_service.dart';
 import '../../domain/engine/number_match_engine.dart';
 import '../../domain/models/daily_challenge_meta.dart';
@@ -54,7 +56,13 @@ class GameController extends Notifier<GameState?> {
         state = engine.initDailyGame(targetDate);
         break;
       case GameMode.timed:
-        state = engine.initTimedGame();
+        final duration = StudioSdk.isInitialized
+            ? StudioSdk.instance.liveOps.getBalanceValue<int>(
+                'timedRushDurationSeconds',
+                defaultValue: GameConstants.timedRushDurationSeconds,
+              )
+            : GameConstants.timedRushDurationSeconds;
+        state = engine.initTimedGame(durationSeconds: duration);
         break;
     }
 
@@ -136,6 +144,13 @@ class GameController extends Notifier<GameState?> {
         } else {
           await gameRepository.saveActiveGame(result.state);
         }
+
+        if (StudioSdk.isInitialized) {
+          final remaining = result.state.board.remainingActiveCount;
+          final total = result.state.board.cells.length;
+          final ratio = total > 0 ? (total - remaining) / total : 0.5;
+          StudioSdk.instance.pinchPoint.updateGameplayTelemetry(levelCompletionRatio: ratio);
+        }
         break;
 
       case SelectionOutcome.ignored:
@@ -189,6 +204,15 @@ class GameController extends Notifier<GameState?> {
     // Check economy affordability
     final canAfford = await rewardService.canAffordHint();
     if (!canAfford) {
+      if (StudioSdk.isInitialized) {
+        final remaining = current.board.remainingActiveCount;
+        final total = current.board.cells.length;
+        final ratio = total > 0 ? (total - remaining) / total : 0.5;
+        unawaited(StudioSdk.instance.pinchPoint.evaluateGameContext(
+          depletedCurrencyId: StudioCurrencyIds.gold,
+          levelCompletionRatio: ratio,
+        ));
+      }
       return false;
     }
 
@@ -202,6 +226,43 @@ class GameController extends Notifier<GameState?> {
     await audio.playSelect();
 
     return true;
+  }
+
+  // Load a remote dynamic puzzle level pack from CMS/Cloudflare R2 via LiveOps
+  Future<bool> loadRemotePuzzleLevel(String packId, {int levelNumber = 1}) async {
+    if (!StudioSdk.isInitialized) return false;
+    _gameTimer?.cancel();
+    final pack = await StudioSdk.instance.liveOps.getPuzzleLevelPack(packId);
+    final levels = pack['levels'] as List<dynamic>?;
+    if (levels != null && levels.isNotEmpty) {
+      final level = levels.firstWhere(
+        (lvl) => (lvl as Map)['levelNumber'] == levelNumber,
+        orElse: () => levels.first,
+      ) as Map<dynamic, dynamic>;
+
+      final dynamic rawValues = level['values'] ?? level['solutionRows'];
+      List<int>? values;
+      if (rawValues is List) {
+        if (rawValues.isNotEmpty && rawValues.first is List) {
+          values = rawValues
+              .expand((row) => (row as List).map((v) => (v as num).toInt()))
+              .toList();
+        } else {
+          values = rawValues.map((v) => (v as num).toInt()).toList();
+        }
+      }
+
+      if (values != null && values.isNotEmpty) {
+        state = engine.initCustomLevelGame(
+          values,
+          id: '${packId}_lvl_$levelNumber',
+        );
+        await gameRepository.saveActiveGame(state!);
+        _startTimerIfNeeded();
+        return true;
+      }
+    }
+    return false;
   }
 
   Future<void> _handleGameCompletion(GameState completedState, {required bool isWon}) async {

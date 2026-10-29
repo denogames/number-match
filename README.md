@@ -1,5 +1,7 @@
 # Number Match — Production Mobile Game
 
+Project records and current verification status: [Project Context](docs/PROJECT_CONTEXT.md).
+
 A complete, production-oriented Number Match mobile game built with **Flutter**, **Riverpod**, **GoRouter**, and **Drift SQLite**. Designed with high visual polish, tactile haptics, responsive touch targets, a token-based theme engine, and a complete monetization architecture (Ads Free non-consumable IAP and smart interstitial/rewarded ads).
 
 ---

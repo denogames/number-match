@@ -16,12 +16,17 @@ class BoardGenerator {
 
   // Generates classic starting board (standard 1..19 sequence without 0)
   BoardModel generateClassicBoard({int columns = BoardModel.defaultColumns}) {
+    return generateBoardFromValues(classicSequence, columns: columns);
+  }
+
+  // Generates a board from a custom sequence of values (e.g. Remote CMS level packs)
+  BoardModel generateBoardFromValues(List<int> values, {int columns = BoardModel.defaultColumns}) {
     final cells = <CellModel>[];
-    for (int i = 0; i < classicSequence.length; i++) {
+    for (int i = 0; i < values.length; i++) {
       cells.add(CellModel(
         id: i,
         index: i,
-        value: classicSequence[i],
+        value: values[i],
       ));
     }
     return BoardModel(columns: columns, cells: cells);

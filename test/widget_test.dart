@@ -36,7 +36,6 @@ void main() {
     expect(find.text('Timed Rush'), findsOneWidget);
     expect(find.text('How to Play'), findsOneWidget);
     expect(find.text('Statistics'), findsOneWidget);
-    expect(find.text('Shop'), findsOneWidget);
     expect(find.text('Settings'), findsOneWidget);
 
     await db.close();

@@ -111,6 +111,22 @@ class NumberMatchEngine {
     );
   }
 
+  // Initialize Game from Custom Level Pack values (Remote LiveOps CMS)
+  GameState initCustomLevelGame(List<int> values, {String? id, GameMode mode = GameMode.classic}) {
+    final board = boardGenerator.generateBoardFromValues(values);
+    return GameState(
+      id: id ?? 'pack_${DateTime.now().millisecondsSinceEpoch}',
+      mode: mode,
+      board: board,
+      score: 0,
+      combo: 1,
+      maxCombo: 1,
+      matchesCount: 0,
+      addsCount: 0,
+      elapsedSeconds: 0,
+    );
+  }
+
   // Handle cell selection
   SelectResult selectCell(GameState currentState, int index) {
     if (currentState.isCompleted) {

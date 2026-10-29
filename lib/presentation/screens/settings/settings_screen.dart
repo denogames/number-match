@@ -1,13 +1,90 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:studio_core_sdk/studio_core_sdk.dart';
 import '../../../application/providers.dart';
 import '../../../core/constants/app_constants.dart';
 import '../../../core/theme/app_theme_tokens.dart';
 import '../../../core/theme/app_themes.dart';
+import '../../../data/local/vault/game_state_vault.dart';
 
 class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({super.key});
+
+  Future<void> _confirmResetLocalData(
+    BuildContext context,
+    WidgetRef ref,
+    AppThemeTokens theme,
+    double textScale,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: theme.surface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Text(
+          'Reset Local Data?',
+          style: TextStyle(
+            fontSize: 18.0 * textScale,
+            fontWeight: FontWeight.w700,
+            color: theme.textPrimary,
+          ),
+        ),
+        content: Text(
+          'This will permanently clear your in-progress games, stats, and coin balance. Your anonymous install ID will be preserved.',
+          style: TextStyle(
+            fontSize: 14.0 * textScale,
+            color: theme.textSecondary,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text('Cancel', style: TextStyle(color: theme.textSecondary)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: theme.cellInvalidBorder,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Reset Data'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true && context.mounted) {
+      // 1. Reset SDK local game data (preserving installId)
+      if (StudioSdk.isInitialized) {
+        await StudioSdk.instance.resetLocalGameData(preserveInstallId: true);
+      }
+
+      // 2. Wipe custom game vault files
+      if (GameStateVault.instance.isInitialized) {
+        await GameStateVault.instance.clear();
+      }
+
+      // 3. Clear database tables
+      final db = ref.read(databaseProvider);
+      await db.delete(db.gameSessionsTable).go();
+      await db.delete(db.dailyChallengesTable).go();
+      await db.delete(db.gameStatisticsTable).go();
+      await db.delete(db.playerWalletsTable).go();
+
+      // 4. Re-initialize economy & reset active game controller
+      final rewardService = ref.read(rewardServiceProvider);
+      await rewardService.initialize();
+      ref.invalidate(gameControllerProvider);
+
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Local data reset successfully.')),
+        );
+        context.go('/home');
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -247,6 +324,58 @@ class SettingsScreen extends ConsumerWidget {
                 ),
                 value: settings.analyticsEnabled,
                 onChanged: (val) => controller.setAnalyticsEnabled(val),
+              ),
+            ),
+            const SizedBox(height: 24),
+
+            // 4. Data & Storage Section
+            Text(
+              'DATA & STORAGE',
+              style: TextStyle(
+                fontSize: 12.0 * settings.textScale,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 1.1,
+                color: theme.textSecondary,
+              ),
+            ),
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: theme.surface,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: theme.divider),
+              ),
+              child: ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: theme.cellInvalidBorder.withValues(alpha: 0.12),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    Icons.delete_outline_rounded,
+                    color: theme.cellInvalidBorder,
+                    size: 24,
+                  ),
+                ),
+                title: Text(
+                  'Reset Local Data',
+                  style: TextStyle(
+                    fontSize: 15.0 * settings.textScale,
+                    fontWeight: FontWeight.w600,
+                    color: theme.cellInvalidBorder,
+                  ),
+                ),
+                subtitle: Text(
+                  'Clears saved games, statistics, and wallet while keeping install identity.',
+                  style: TextStyle(
+                    fontSize: 12.0 * settings.textScale,
+                    color: theme.textSecondary,
+                  ),
+                ),
+                onTap: () => _confirmResetLocalData(context, ref, theme, settings.textScale),
               ),
             ),
             const SizedBox(height: 30),

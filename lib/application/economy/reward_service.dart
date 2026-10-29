@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart';
+import 'package:studio_core_sdk/studio_core_sdk.dart';
 import '../../core/constants/game_constants.dart';
 import '../../domain/models/game_mode.dart';
 import '../../domain/repositories/settings_repository.dart';
@@ -11,6 +13,7 @@ class RewardService {
 
   final _coinStreamController = StreamController<int>.broadcast();
   int _cachedCoins = GameConstants.startingCoins;
+  VoidCallback? _removeWalletListener;
 
   RewardService({
     required this.settingsRepository,
@@ -20,15 +23,71 @@ class RewardService {
   Stream<int> get coinStream => _coinStreamController.stream;
   int get currentCoins => _cachedCoins;
 
+  int get currentHintCost {
+    if (StudioSdk.isInitialized) {
+      return StudioSdk.instance.liveOps.getBalanceValue<int>(
+        'hintCostCoins',
+        defaultValue: GameConstants.hintCostCoins,
+      );
+    }
+    return GameConstants.hintCostCoins;
+  }
+
   Future<void> initialize() async {
-    _cachedCoins = await settingsRepository.getCoins();
+    final localCoins = await settingsRepository.getCoins();
+    if (StudioSdk.isInitialized) {
+      final sdkWallet = StudioSdk.instance.wallet;
+      final sdkCoins = sdkWallet.gold;
+      if (sdkCoins > 0) {
+        _cachedCoins = sdkCoins;
+      } else if (localCoins > 0) {
+        _cachedCoins = localCoins;
+        await sdkWallet.setExactBalance(
+          StudioCurrencyIds.gold,
+          localCoins,
+          recordInOutbox: false,
+        );
+      } else {
+        _cachedCoins = GameConstants.startingCoins;
+        await sdkWallet.setExactBalance(
+          StudioCurrencyIds.gold,
+          _cachedCoins,
+          recordInOutbox: false,
+        );
+      }
+
+      final coinListenable = sdkWallet.watchCurrency(StudioCurrencyIds.gold);
+      void onSdkCoinChanged() {
+        final val = coinListenable.value;
+        if (val != _cachedCoins) {
+          _cachedCoins = val;
+          _coinStreamController.add(_cachedCoins);
+          unawaited(settingsRepository.setCoins(_cachedCoins));
+        }
+      }
+
+      coinListenable.addListener(onSdkCoinChanged);
+      _removeWalletListener = () => coinListenable.removeListener(onSdkCoinChanged);
+    } else {
+      _cachedCoins = localCoins;
+    }
     _coinStreamController.add(_cachedCoins);
   }
 
   Future<int> addCoins(int amount, {required String reason}) async {
     if (amount <= 0) return _cachedCoins;
 
-    _cachedCoins += amount;
+    if (StudioSdk.isInitialized) {
+      await StudioSdk.instance.wallet.credit(
+        StudioCurrencyIds.gold,
+        amount,
+        source: reason,
+      );
+      _cachedCoins = StudioSdk.instance.wallet.gold;
+    } else {
+      _cachedCoins += amount;
+    }
+
     await settingsRepository.setCoins(_cachedCoins);
     _coinStreamController.add(_cachedCoins);
 
@@ -37,9 +96,20 @@ class RewardService {
 
   Future<bool> spendCoins(int amount, {required String reason}) async {
     if (amount <= 0) return true;
-    if (_cachedCoins < amount) return false;
 
-    _cachedCoins -= amount;
+    if (StudioSdk.isInitialized) {
+      final success = await StudioSdk.instance.wallet.trySpend(
+        StudioCurrencyIds.gold,
+        amount,
+        reason: reason,
+      );
+      if (!success) return false;
+      _cachedCoins = StudioSdk.instance.wallet.gold;
+    } else {
+      if (_cachedCoins < amount) return false;
+      _cachedCoins -= amount;
+    }
+
     await settingsRepository.setCoins(_cachedCoins);
     _coinStreamController.add(_cachedCoins);
 
@@ -47,17 +117,18 @@ class RewardService {
   }
 
   Future<bool> canAffordHint() async {
-    return _cachedCoins >= GameConstants.hintCostCoins;
+    return _cachedCoins >= currentHintCost;
   }
 
   Future<bool> spendForHint() async {
+    final cost = currentHintCost;
     final success = await spendCoins(
-      GameConstants.hintCostCoins,
+      cost,
       reason: 'hint_purchased',
     );
     if (success) {
       await analyticsService.logEvent(AnalyticsEventType.hintUsed, {
-        'cost': GameConstants.hintCostCoins,
+        'cost': cost,
         'remaining_coins': _cachedCoins,
       });
     }
@@ -81,16 +152,32 @@ class RewardService {
   }
 
   Future<int> awardGameVictory(GameMode mode, int score) async {
-    final reward = mode == GameMode.daily
+    final defaultReward = mode == GameMode.daily
         ? GameConstants.dailyChallengeRewardCoins
         : GameConstants.gameWinRewardCoins;
+    final configKey = mode == GameMode.daily
+        ? 'dailyChallengeRewardCoins'
+        : 'gameWinRewardCoins';
+    final reward = StudioSdk.isInitialized
+        ? StudioSdk.instance.liveOps.getBalanceValue<int>(
+            configKey,
+            defaultValue: defaultReward,
+          )
+        : defaultReward;
 
     await addCoins(reward, reason: 'victory_${mode.storageKey}');
     return reward;
   }
 
   Future<int> awardRewardedAd() async {
-    const reward = GameConstants.rewardedAdCoins;
+    final defaultReward = GameConstants.rewardedAdCoins;
+    final reward = StudioSdk.isInitialized
+        ? StudioSdk.instance.liveOps.getBalanceValue<int>(
+            'rewardedAdCoins',
+            defaultValue: defaultReward,
+          )
+        : defaultReward;
+
     await addCoins(reward, reason: 'rewarded_ad_watched');
     await analyticsService.logEvent(AnalyticsEventType.rewardedAdCompleted, {
       'coins_awarded': reward,
@@ -99,6 +186,7 @@ class RewardService {
   }
 
   void dispose() {
+    _removeWalletListener?.call();
     _coinStreamController.close();
   }
 }

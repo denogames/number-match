@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:studio_core_sdk/studio_core_sdk.dart';
 import '../../../application/providers.dart';
 import '../../../core/constants/game_constants.dart';
 import '../../../domain/models/game_mode.dart';
+import '../../../domain/models/game_state.dart';
 import '../../common/widgets/app_button.dart';
 import '../../common/widgets/coin_chip.dart';
 import '../results/game_results_dialog.dart';
@@ -130,8 +132,6 @@ class _GameScreenState extends ConsumerState<GameScreen> {
   void _showNoCoinsDialog() {
     final settings = ref.read(settingsControllerProvider);
     final theme = settings.currentTheme;
-    final adService = ref.read(adServiceProvider);
-    final rewardService = ref.read(rewardServiceProvider);
 
     showDialog(
       context: context,
@@ -147,43 +147,23 @@ class _GameScreenState extends ConsumerState<GameScreen> {
           ),
         ),
         content: Text(
-          'Hints cost ${GameConstants.hintCostCoins} coins. Watch a short video to earn +${GameConstants.rewardedAdCoins} coins or visit the shop!',
+          'Hints cost ${GameConstants.hintCostCoins} coins. Complete daily challenges and games to earn more coins!',
           style: TextStyle(
             fontSize: 14.0 * settings.textScale,
             color: theme.textSecondary,
           ),
         ),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: Text('Cancel', style: TextStyle(color: theme.textSecondary)),
-          ),
-          ElevatedButton.icon(
+          ElevatedButton(
             style: ElevatedButton.styleFrom(
               backgroundColor: theme.primary,
               foregroundColor: theme.onPrimary,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
             ),
-            icon: const Icon(Icons.video_library_rounded, size: 18),
-            label: const Text('Free Coins'),
-            onPressed: () async {
-              Navigator.of(ctx).pop();
-              await adService.showRewarded(
-                placement: 'hint_refill',
-                onRewardEarned: () async {
-                  await rewardService.awardRewardedAd();
-                  if (mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text(
-                          '+${GameConstants.rewardedAdCoins} Coins added to wallet!',
-                        ),
-                        backgroundColor: theme.accent,
-                      ),
-                    );
-                  }
-                },
-              );
-            },
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('OK'),
           ),
         ],
       ),
@@ -192,31 +172,34 @@ class _GameScreenState extends ConsumerState<GameScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final state = ref.watch(gameControllerProvider);
+    // Listen to game completion to trigger results dialog without rebuilding full tree
+    ref.listen<GameState?>(gameControllerProvider, (prev, next) {
+      if (next != null && next.isCompleted && !_resultsDialogShown) {
+        _resultsDialogShown = true;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          showDialog(
+            context: context,
+            barrierDismissible: false,
+            builder: (ctx) => GameResultsDialog(
+              state: next,
+              onPlayAgain: () {
+                _resultsDialogShown = false;
+                ref.read(gameControllerProvider.notifier).restartGame();
+              },
+            ),
+          ).then((_) {
+            _resultsDialogShown = false;
+          });
+        });
+      }
+    });
+
+    final hasGame = ref.watch(gameControllerProvider.select((s) => s != null));
     final settings = ref.watch(settingsControllerProvider);
     final theme = settings.currentTheme;
 
-    // Check completion trigger
-    if (state != null && state.isCompleted && !_resultsDialogShown) {
-      _resultsDialogShown = true;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        showDialog(
-          context: context,
-          barrierDismissible: false,
-          builder: (ctx) => GameResultsDialog(
-            state: state,
-            onPlayAgain: () {
-              _resultsDialogShown = false;
-              ref.read(gameControllerProvider.notifier).restartGame();
-            },
-          ),
-        ).then((_) {
-          _resultsDialogShown = false;
-        });
-      });
-    }
-
-    if (state == null) {
+    if (!hasGame) {
       return Scaffold(
         backgroundColor: theme.background,
         body: Center(
@@ -255,51 +238,120 @@ class _GameScreenState extends ConsumerState<GameScreen> {
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
           child: Column(
             children: [
-              // Header with score, timer, combo, remaining
-              GameHeaderWidget(
-                state: state,
-                theme: theme,
-                textScale: settings.textScale,
-                onPause: _showPauseDialog,
+              // Header with score, timer, combo, remaining (isolated from 1-second ticks)
+              Consumer(
+                builder: (context, ref, _) {
+                  ref.watch(
+                    gameControllerProvider.select(
+                      (s) => s == null
+                          ? 0
+                          : Object.hash(
+                              s.mode,
+                              s.score,
+                              s.combo,
+                              s.board.remainingActiveCount,
+                            ),
+                    ),
+                  );
+                  final state = ref.read(gameControllerProvider);
+                  if (state == null) return const SizedBox.shrink();
+                  return GameHeaderWidget(
+                    state: state,
+                    theme: theme,
+                    textScale: settings.textScale,
+                    onPause: _showPauseDialog,
+                    timerBadge: GameTimerBadgeWidget(
+                      mode: state.mode,
+                      theme: theme,
+                      textScale: settings.textScale,
+                    ),
+                  );
+                },
               ),
               const SizedBox(height: 10),
 
-              // Game board grid
+              // Game board grid (isolated from 1-second ticks)
               Expanded(
-                child: GameBoardWidget(
-                  board: state.board,
-                  selectedIndex: state.selectedIndex,
-                  hintPair: state.hintPair,
-                  invalidIndex: state.invalidPairTargetIndex,
-                  onCellTap: (index) {
-                    ref.read(gameControllerProvider.notifier).tapCell(index);
+                child: Consumer(
+                  builder: (context, ref, _) {
+                    ref.watch(
+                      gameControllerProvider.select(
+                        (s) => s == null
+                            ? 0
+                            : Object.hash(
+                                s.board.rowCount,
+                                s.board.cells.length,
+                                s.board.remainingActiveCount,
+                                s.selectedIndex,
+                                s.hintPair,
+                                s.invalidPairTargetIndex,
+                              ),
+                      ),
+                    );
+                    final state = ref.read(gameControllerProvider);
+                    if (state == null) return const SizedBox.shrink();
+                    return GameBoardWidget(
+                      board: state.board,
+                      selectedIndex: state.selectedIndex,
+                      hintPair: state.hintPair,
+                      invalidIndex: state.invalidPairTargetIndex,
+                      onCellTap: (index) {
+                        ref
+                            .read(gameControllerProvider.notifier)
+                            .tapCell(index);
+                      },
+                      theme: theme,
+                      textScale: settings.textScale,
+                      reducedMotion: settings.reducedMotion,
+                      scrollController: _scrollController,
+                    );
                   },
-                  theme: theme,
-                  textScale: settings.textScale,
-                  reducedMotion: settings.reducedMotion,
-                  scrollController: _scrollController,
                 ),
               ),
               const SizedBox(height: 10),
 
-              // Controls: Undo, Add Numbers, Hint
-              GameControlsWidget(
-                state: state,
-                theme: theme,
-                textScale: settings.textScale,
-                onUndo: () {
-                  ref.read(gameControllerProvider.notifier).undo();
-                },
-                onAddNumbers: () async {
-                  await ref.read(gameControllerProvider.notifier).addNumbers();
-                  _scrollToBottom();
-                },
-                onHint: () async {
-                  final success =
-                      await ref.read(gameControllerProvider.notifier).requestHint();
-                  if (!success && mounted) {
-                    _showNoCoinsDialog();
-                  }
+              // Controls: Undo, Add Numbers, Hint (isolated from 1-second ticks)
+              Consumer(
+                builder: (context, ref, _) {
+                  ref.watch(
+                    gameControllerProvider.select(
+                      (s) => s == null
+                          ? 0
+                          : Object.hash(
+                              s.canUndo,
+                              s.board.remainingActiveCount,
+                            ),
+                    ),
+                  );
+                  final state = ref.read(gameControllerProvider);
+                  if (state == null) return const SizedBox.shrink();
+                  return GameControlsWidget(
+                    state: state,
+                    theme: theme,
+                    textScale: settings.textScale,
+                    onUndo: () {
+                      ref.read(gameControllerProvider.notifier).undo();
+                    },
+                    onAddNumbers: () async {
+                      await ref
+                          .read(gameControllerProvider.notifier)
+                          .addNumbers();
+                      _scrollToBottom();
+                    },
+                    onHint: () async {
+                      final success = await ref
+                          .read(gameControllerProvider.notifier)
+                          .requestHint();
+                      if (!success && mounted) {
+                        if (StudioSdk.isInitialized &&
+                            StudioSdk.instance.pinchPoint.activeOffer !=
+                                null) {
+                          return;
+                        }
+                        _showNoCoinsDialog();
+                      }
+                    },
+                  );
                 },
               ),
             ],

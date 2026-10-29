@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:drift/drift.dart';
 import '../../domain/models/board_model.dart';
@@ -7,6 +8,7 @@ import '../../domain/models/game_state.dart';
 import '../../domain/models/move_history.dart';
 import '../../domain/repositories/game_repository.dart';
 import '../local/database/app_database.dart';
+import '../local/vault/game_state_vault.dart';
 
 class GameRepositoryImpl implements GameRepository {
   final AppDatabase database;
@@ -15,6 +17,13 @@ class GameRepositoryImpl implements GameRepository {
 
   @override
   Future<GameState?> loadActiveGame(GameMode mode) async {
+    // 1. Try loading from crash-safe EncryptedStorageBox vault
+    if (GameStateVault.instance.isInitialized) {
+      final vaulted = GameStateVault.instance.loadActiveGame(mode);
+      if (vaulted != null) return vaulted;
+    }
+
+    // 2. Fallback to SQLite
     final sessionKey = '${mode.storageKey}_active';
     final query = database.select(database.gameSessionsTable)
       ..where((tbl) => tbl.id.equals(sessionKey));
@@ -52,6 +61,12 @@ class GameRepositoryImpl implements GameRepository {
 
   @override
   Future<void> saveActiveGame(GameState state) async {
+    // 1. Await persistent crash-safe disk vault write
+    if (GameStateVault.instance.isInitialized) {
+      await GameStateVault.instance.saveActiveGame(state);
+    }
+
+    // 2. Update SQLite
     final sessionKey = '${state.mode.storageKey}_active';
     final boardJsonStr = jsonEncode(state.board.toJson());
     final undoJsonStr = jsonEncode(state.undoHistory.map((u) => u.toJson()).toList());
@@ -81,6 +96,9 @@ class GameRepositoryImpl implements GameRepository {
 
   @override
   Future<void> deleteActiveGame(GameMode mode) async {
+    if (GameStateVault.instance.isInitialized) {
+      await GameStateVault.instance.deleteActiveGame(mode);
+    }
     final sessionKey = '${mode.storageKey}_active';
     await (database.delete(database.gameSessionsTable)
           ..where((tbl) => tbl.id.equals(sessionKey)))
@@ -89,6 +107,11 @@ class GameRepositoryImpl implements GameRepository {
 
   @override
   Future<DailyChallengeMeta?> getDailyChallenge(String dateKey) async {
+    if (GameStateVault.instance.isInitialized) {
+      final vaulted = GameStateVault.instance.getDailyChallenge(dateKey);
+      if (vaulted != null) return vaulted;
+    }
+
     final query = database.select(database.dailyChallengesTable)
       ..where((tbl) => tbl.dateKey.equals(dateKey));
     final entry = await query.getSingleOrNull();
@@ -106,6 +129,10 @@ class GameRepositoryImpl implements GameRepository {
 
   @override
   Future<void> saveDailyChallenge(DailyChallengeMeta meta) async {
+    if (GameStateVault.instance.isInitialized) {
+      await GameStateVault.instance.saveDailyChallenge(meta);
+    }
+
     await database.into(database.dailyChallengesTable).insertOnConflictUpdate(
           DailyChallengesTableCompanion(
             dateKey: Value(meta.dateKey),
@@ -120,6 +147,11 @@ class GameRepositoryImpl implements GameRepository {
 
   @override
   Future<List<DailyChallengeMeta>> getAllDailyChallenges() async {
+    if (GameStateVault.instance.isInitialized) {
+      final vaulted = GameStateVault.instance.getAllDailyChallenges();
+      if (vaulted.isNotEmpty) return vaulted;
+    }
+
     final list = await database.select(database.dailyChallengesTable).get();
     return list
         .map((entry) => DailyChallengeMeta(
